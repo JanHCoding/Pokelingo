@@ -530,7 +530,7 @@ function renderLesson() {
       <div id="fb"></div>
       <div class="fb-row">
         ${s.cfg.type !== 'blitz' ? `<button class="btn ghost skip" id="skip">Weiß nicht</button>` : ''}
-        <button class="btn" id="check" disabled>Überprüfen</button>
+        <button class="btn" id="check" disabled ${s.cfg.type === 'blitz' ? 'hidden' : ''}>Überprüfen</button>
       </div></div></div>`;
   }
 
