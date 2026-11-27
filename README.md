@@ -20,8 +20,22 @@ Funktioniert am Handy als installierbare App (PWA) und offline.
 | **Elaboration** | Eigenes Eselsbrücken-Feld pro Pokémon (z. B. *Bisa-SAM* = Samen). |
 | **Motivation** | XP, Tagesziel, Streak, Combo, 60-Sekunden-Blitzrunde mit Rekord. |
 
-Weitere Modi pro Generation: **Schwächen** (höchste Fehlerquote), **Meisterprüfung** (alle gelernten tippen), gesperrte Lektionen per Test überspringen.
-Einstellungen: abgefragte Sprache (DE / EN / beide inkl. Übersetzungsaufgaben), Tippen an/aus, Tagesziel, Design.
+### Modi
+
+- **Lernpfad** pro Generation (Lektionen + Checkpoints, gesperrte Lektionen per Test überspringbar)
+- **Wiederholen** – nur fällige Pokémon (Spaced Repetition)
+- **Schwächen** – Pokémon mit der höchsten Fehlerquote
+- **📝 Alle nennen** – wie pkmnquiz: alle Namen einer Gen (oder alle 1025) frei eintippen, Raster mit ???-Feldern,
+  *fehlende Typen* mit Anzahl (antippen = filtern), Timer + Bestzeit, Silhouetten-Tipp, Aufgeben zeigt Fehlendes rot; Stand wird gespeichert
+- **📕 Pokédex-Raten** – unbekannte Pokémon sind Silhouetten mit „???“; antippen → erst raten (Tipps: Typ, Anfangsbuchstaben), dann aufdecken, mit ← → weiterblättern
+- **⚡ Blitzrunde** – 60 Sekunden Silhouetten
+- **🔍 Unscharf** – Bild wird über 10 s scharf, je schneller desto mehr Punkte
+- **❤️ Survival** – endlos, wird schwerer, 3 Leben, Rekord
+- **🏆 Meisterprüfung** – alle gelernten Namen tippen
+
+Sprache: Schnellumschalter oben in der Kopfzeile (🇩🇪 DE → 🇬🇧 EN → 🌍 Beide). Beim freien Raten zählen **immer** deutscher und englischer Name;
+in Lektionen zählt der Name in der anderen Sprache auch (mit Hinweis auf die gesuchte Variante).
+Weitere Einstellungen: Tippen an/aus, Tagesziel, Design, Töne/Vorlesen.
 Fortschritt liegt im `localStorage` des Browsers und lässt sich als JSON sichern/laden.
 
 ## Lokal starten
