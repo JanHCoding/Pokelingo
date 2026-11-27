@@ -1,5 +1,5 @@
 // Offline-Unterstützung: App-Dateien vorab cachen, Bilder beim ersten Laden cachen.
-const VERSION = 'pokelingo-v1';
+const VERSION = 'pokelingo-v2';
 const CORE = ['./', 'index.html', 'style.css', 'app.js', 'data/pokemon.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'];
 
 self.addEventListener('install', e => {

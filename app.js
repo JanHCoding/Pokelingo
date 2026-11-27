@@ -73,7 +73,9 @@ const defaults = () => ({
   xp: 0,
   streak: { count: 0, last: null },
   today: { date: null, xp: 0 },
-  best: { blitz: 0 },
+  best: { blitz: 0, survival: 0, blur: 0 },
+  seen: {},        // im Pokédex erraten/aufgedeckt
+  marathon: {},    // "Alle nennen": gespeicherter Stand pro Gen
 });
 let S = load();
 function load() {
@@ -233,6 +235,7 @@ document.addEventListener('keydown', e => { if (keyHandler) keyHandler(e); });
 function go(name, params = {}) {
   route = { name, ...params };
   keyHandler = null;
+  clearInterval(marathonTimer);
   if (session && name !== 'lesson') session = null;
   render();
   window.scrollTo(0, 0);
@@ -240,13 +243,15 @@ function go(name, params = {}) {
 function render() {
   applyTheme();
   rollDay();
-  ({ home: renderHome, gen: renderGen, lesson: renderLesson, result: renderResult, dex: renderDex, settings: renderSettings, about: renderAbout }[route.name] || renderHome)();
+  ({ home: renderHome, gen: renderGen, lesson: renderLesson, result: renderResult, dex: renderDex, settings: renderSettings, about: renderAbout, guess: renderGuess, marathon: renderMarathon }[route.name] || renderHome)();
 }
 
+const LANG_PILL = { de: '🇩🇪 DE', en: '🇬🇧 EN', both: '🌍 Beide' };
 function topbar(back) {
   return `<header class="topbar">
     ${back ? `<button class="iconbtn" data-act="back" aria-label="Zurück">←</button>` : ''}
     <div class="title">Pokélingo</div>
+    <button class="langpill" data-act="lang" title="Abgefragte Sprache umschalten">${LANG_PILL[S.settings.lang]}</button>
     <div class="stat streak" title="Tage in Folge">🔥 ${streakAlive()}</div>
     <div class="stat xp" title="Erfahrungspunkte">⚡ ${S.xp}</div>
   </header>`;
@@ -258,7 +263,13 @@ function nav(active) {
 }
 app.addEventListener('click', e => {
   const n = e.target.closest('[data-nav]'); if (n) { go(n.dataset.nav); return; }
-  const b = e.target.closest('[data-act="back"]'); if (b) { go(route.back || 'home', route.backParams || {}); }
+  const b = e.target.closest('[data-act="back"]'); if (b) { go(route.back || 'home', route.backParams || {}); return; }
+  const lp = e.target.closest('[data-act="lang"]');
+  if (lp) {
+    S.settings.lang = { de: 'en', en: 'both', both: 'de' }[S.settings.lang]; save();
+    if (route.name === 'marathon') clearInterval(marathonTimer);
+    render();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -280,6 +291,8 @@ function renderHome() {
     <div class="quick">
       <button class="btn ${allDue ? '' : 'ghost'}" id="q-review" ${allDue ? '' : 'disabled'}>🔁 Wiederholen (${allDue})</button>
       <button class="btn blue" id="q-blitz" ${learned >= 4 ? '' : 'disabled'}>⚡ Blitzrunde</button>
+      <button class="btn ghost" id="q-marathon">📝 Alle ${P.length} nennen</button>
+      <button class="btn ghost" id="q-survival">❤️ Survival</button>
     </div>
     <div class="section-title">Generationen</div>
     <div class="gens">
@@ -301,6 +314,8 @@ function renderHome() {
   app.querySelectorAll('[data-gen]').forEach(b => b.onclick = () => go('gen', { gen: +b.dataset.gen }));
   $('#q-review').onclick = () => startSession({ type: 'review', pool: P, back: 'home' });
   $('#q-blitz').onclick = () => startSession({ type: 'blitz', pool: P, back: 'home' });
+  $('#q-marathon').onclick = () => go('marathon', { key: 'all', back: 'home' });
+  $('#q-survival').onclick = () => startSession({ type: 'survival', pool: P, back: 'home' });
   $('#about-link').onclick = e => { e.preventDefault(); go('about', { back: 'home' }); };
 }
 
@@ -320,11 +335,14 @@ function renderGen() {
       <div class="progress"><i style="width:${l / g.mons.length * 100}%"></i></div>
       <div class="small" style="margin-top:6px">${l}/${g.mons.length} gelernt · ${masteredIn(g.mons).length} gemeistert</div>
     </div>
+    <button class="mode wide" id="m-marathon"><span class="ic">📝</span><div><b>Alle nennen</b><span>${marathonLabel(`g${g.n}`, g.mons.length)}</span></div></button>
     <div class="modes">
       <button class="mode" id="m-review" ${d ? '' : 'disabled'}><span class="ic">🔁</span><div><b>Wiederholen</b><span>${d} fällig</span></div></button>
       <button class="mode" id="m-weak" ${l >= 4 ? '' : 'disabled'}><span class="ic">🎯</span><div><b>Schwächen</b><span>häufigste Fehler</span></div></button>
       <button class="mode" id="m-blitz" ${l >= 4 ? '' : 'disabled'}><span class="ic">⚡</span><div><b>Blitzrunde</b><span>60 Sek. Silhouetten</span></div></button>
       <button class="mode" id="m-exam" ${l >= 10 ? '' : 'disabled'}><span class="ic">🏆</span><div><b>Meisterprüfung</b><span>alle gelernten tippen</span></div></button>
+      <button class="mode" id="m-blur"><span class="ic">🔍</span><div><b>Unscharf</b><span>Bild wird scharf – schnell sein!</span></div></button>
+      <button class="mode" id="m-survival"><span class="ic">❤️</span><div><b>Survival</b><span>3 Leben · Rekord ${S.best.survival}</span></div></button>
     </div>
     <div class="path">
       ${g.nodes.map((nd, i) => {
@@ -359,6 +377,9 @@ function renderGen() {
   $('#m-weak').onclick = () => startSession({ type: 'weak', pool: g.mons, gen: g, ...back });
   $('#m-blitz').onclick = () => startSession({ type: 'blitz', pool: g.mons, gen: g, ...back });
   $('#m-exam').onclick = () => startSession({ type: 'exam', pool: g.mons, gen: g, ...back });
+  $('#m-blur').onclick = () => startSession({ type: 'blur', pool: g.mons, gen: g, ...back });
+  $('#m-survival').onclick = () => startSession({ type: 'survival', pool: g.mons, gen: g, ...back });
+  $('#m-marathon').onclick = () => go('marathon', { key: `g${g.n}`, ...back });
 }
 
 // ---------------------------------------------------------------------------
@@ -422,6 +443,16 @@ function startSession(cfg) {
   } else if (type === 'blitz') {
     const l = learnedIn(pool);
     for (let i = 0; i < 200; i++) queue.push(q(pick(l), 'sil'));
+  } else if (type === 'survival') {
+    // Endlos, wird mit der Zeit schwerer; 3 Leben
+    const l = learnedIn(pool).length >= 4 ? learnedIn(pool) : pool;
+    for (let i = 0; i < 400; i++) {
+      const p = pick(l);
+      queue.push(q(p, i < 5 ? easyEx() : exForBox(Math.min(MAX_BOX, (S.cards[p.id]?.box || 0) + (i / 8 | 0)))));
+    }
+  } else if (type === 'blur') {
+    const l = learnedIn(pool).length >= 4 ? learnedIn(pool) : pool;
+    shuffle(l).slice(0, 10).forEach(p => queue.push(q(p, 'blur')));
   }
 
   session = {
@@ -430,6 +461,8 @@ function startSession(cfg) {
     firstTry: new Map(), // id -> erster Versuch richtig?
     startedAt: Date.now(),
     blitzEnd: type === 'blitz' ? Date.now() + 60000 : 0,
+    lives: type === 'survival' ? 3 : 0,
+    points: 0,
     // Distraktoren: in Lektionen aus der ganzen Gen, sonst aus dem Pool
     // Lektion: Ablenker aus der Lektion + schon Gelerntem (Unterscheiden üben), sonst aus der Gen
     distractorPool: type === 'lesson'
@@ -444,6 +477,8 @@ function renderLesson() {
   const s = session;
   if (!s) return go('home');
   if (s.i >= s.queue.length || (s.blitzEnd && Date.now() >= s.blitzEnd)) return finishSession();
+  if (s.cfg.type === 'survival' && s.lives <= 0) return finishSession();
+  s.exStart = Date.now();
   const item = s.queue[s.i];
   const { p } = item;
   // Übersetzen ist sinnlos, wenn beide Namen gleich sind (z. B. Natu)
@@ -451,7 +486,7 @@ function renderLesson() {
   const lang = item.lang;
   const other = lang === 'de' ? 'en' : 'de';
   const answered = s.queue.slice(0, s.i).filter(x => x.ex !== 'intro' && !x.retry).length;
-  const pct = s.cfg.type === 'blitz'
+  const pct = s.cfg.type === 'survival' ? (s.correct % 10) * 10 : s.cfg.type === 'blitz'
     ? 100 - Math.max(0, (s.blitzEnd - Date.now()) / 600)
     : answered / s.total * 100;
 
@@ -476,9 +511,10 @@ function renderLesson() {
           <textarea id="note" rows="1" placeholder="z. B. Bisa-SAMEN: Pflanze mit Samen auf dem Rücken">${esc(note)}</textarea></div>
       </div>`;
     footer = `<div class="footer"><div class="footer-inner"><button class="btn" id="next">Weiter</button></div></div>`;
-  } else if (ex === 'img2name' || ex === 'sil') {
+  } else if (ex === 'img2name' || ex === 'sil' || ex === 'blur') {
     const opts = shuffle([p, ...distractors(p, 3, s.distractorPool, lang)]);
-    body = prompt(ex === 'sil' ? 'Wer ist das Pokémon?' : 'Wie heißt dieses Pokémon?', LANG_LABEL[lang]) + stage(ex === 'sil') +
+    const st = ex === 'blur' ? `<div class="poke-stage"><img id="poke-img" class="blur" src="${img(p.id)}" alt=""></div>` : stage(ex === 'sil');
+    body = prompt(ex === 'sil' ? 'Wer ist das Pokémon?' : ex === 'blur' ? 'Wer ist das? Je schneller, desto mehr Punkte!' : 'Wie heißt dieses Pokémon?', LANG_LABEL[lang]) + st +
       `<div class="options grid2">${opts.map((o, k) => `<button class="opt" data-id="${o.id}"><span class="key">${k + 1}</span>${esc(o[lang])}</button>`).join('')}</div>`;
     check = () => { const sel = $('.opt.sel'); return { ok: sel && +sel.dataset.id === p.id }; };
   } else if (ex === 'name2img') {
@@ -520,8 +556,11 @@ function renderLesson() {
        <button class="btn ghost small" id="hint" style="align-self:flex-start">💡 Tipp</button>
        <div id="hint-out"></div>`;
     check = () => {
-      const r = checkTyped($('#answer').value, p[lang]);
-      return { ok: r !== 'wrong', typo: r === 'typo', given: $('#answer').value };
+      const v = $('#answer').value;
+      const r = checkTyped(v, p[lang]);
+      // Name in der anderen Sprache gewusst? Zählt auch – mit Hinweis
+      const alt = r === 'wrong' && checkTyped(v, p[other]) !== 'wrong';
+      return { ok: r !== 'wrong' || alt, typo: r === 'typo', alt, given: v };
     };
   }
 
@@ -530,7 +569,7 @@ function renderLesson() {
       <div id="fb"></div>
       <div class="fb-row">
         ${s.cfg.type !== 'blitz' ? `<button class="btn ghost skip" id="skip">Weiß nicht</button>` : ''}
-        <button class="btn" id="check" disabled ${s.cfg.type === 'blitz' ? 'hidden' : ''}>Überprüfen</button>
+        <button class="btn" id="check" disabled ${s.cfg.type === 'blitz' || ex === 'blur' ? 'hidden' : ''}>Überprüfen</button>
       </div></div></div>`;
   }
 
@@ -538,15 +577,20 @@ function renderLesson() {
     <div class="lesson-top">
       <button class="iconbtn" id="quit" aria-label="Beenden">✕</button>
       <div class="progress"><i style="width:${Math.max(2, pct)}%"></i></div>
-      ${s.cfg.type === 'blitz' ? `<div class="timer" id="timer">${Math.ceil((s.blitzEnd - Date.now()) / 1000)}</div>` : `<div class="combo">${s.combo >= 3 ? `🔥${s.combo}` : ''}</div>`}
+      ${s.cfg.type === 'blitz' ? `<div class="timer" id="timer">${Math.ceil((s.blitzEnd - Date.now()) / 1000)}</div>`
+        : s.cfg.type === 'survival' ? `<div class="combo" title="Leben">${'❤️'.repeat(s.lives)}${'🤍'.repeat(3 - s.lives)} ${s.correct}</div>`
+        : s.cfg.type === 'blur' ? `<div class="combo" style="color:var(--blue)">${s.points} P</div>`
+        : `<div class="combo">${s.combo >= 3 ? `🔥${s.combo}` : ''}</div>`}
     </div>
     <div class="lesson-body" id="lb">${body}</div>
     ${footer}
   </div>`;
 
   $('#quit').onclick = () => {
-    if (s.cfg.type === 'blitz' || confirm('Lektion wirklich beenden? Dein Fortschritt in dieser Lektion geht verloren.')) { clearInterval(s.timerId); go(s.cfg.back || 'home', s.cfg.backParams || {}); }
+    if (['blitz', 'survival', 'blur'].includes(s.cfg.type) || confirm('Lektion wirklich beenden? Dein Fortschritt in dieser Lektion geht verloren.')) { clearInterval(s.timerId); go(s.cfg.back || 'home', s.cfg.backParams || {}); }
   };
+
+  if (ex === 'blur') requestAnimationFrame(() => requestAnimationFrame(() => $('#poke-img')?.classList.add('clearing')));
 
   if (s.cfg.type === 'blitz') {
     clearInterval(s.timerId);
@@ -581,7 +625,7 @@ function renderLesson() {
     if (answeredNow) return;
     opts.forEach(x => x.classList.remove('sel'));
     o.classList.add('sel'); checkBtn.disabled = false;
-    if (s.cfg.type === 'blitz') submit();
+    if (s.cfg.type === 'blitz' || ex === 'blur') submit();
   });
   if (ex === 'tiles') {
     const ans = $('#tiles-answer');
@@ -627,18 +671,22 @@ function renderLesson() {
         else if (o.classList.contains('sel')) o.classList.add('wrong');
       });
     }
-    const pi = $('#poke-img'); if (pi) pi.classList.remove('sil');
+    const pi = $('#poke-img'); if (pi) pi.classList.remove('sil', 'blur', 'clearing');
+    const gained = ex === 'blur' && ok ? Math.max(1, Math.round(10 - (Date.now() - s.exStart) / 1000)) : 0;
+    s.points += gained;
+    if (s.cfg.type === 'survival' && !ok) s.lives--;
     const inp = $('#answer'); if (inp) inp.disabled = true;
 
     // Wertung + SRS (Lektion: erst am Ende; sonst sofort beim ersten Versuch)
     if (!item.retry) { if (ok) s.correct++; else s.wrong++; }
     if (ok) { s.combo++; s.maxCombo = Math.max(s.maxCombo, s.combo); }
     else { s.combo = 0; s.mistakes.add(p.id); }
-    if (s.cfg.type !== 'lesson' && !item.retry && !s.cfg.skipTest) grade(p.id, ok && !s.usedHint);
+    // SRS nur für schon gelernte Pokémon (Spielmodi sollen nichts "Neues" anlegen)
+    if (s.cfg.type !== 'lesson' && !item.retry && !s.cfg.skipTest && S.cards[p.id]) grade(p.id, ok && !s.usedHint);
     s.usedHint = false;
 
     // Falsch? -> später nochmal (wie bei Duolingo), nicht im Blitz
-    if (!ok && s.cfg.type !== 'blitz') {
+    if (!ok && !['blitz', 'survival', 'blur'].includes(s.cfg.type)) {
       const at = Math.min(s.queue.length, s.i + 3 + (Math.random() * 3 | 0));
       s.queue.splice(at, 0, { p, ex: ex === 'typein' || ex === 'siltype' ? 'tiles' : (ex === 'name2img' ? 'img2name' : ex), lang, retry: true });
       s.retries++;
@@ -658,8 +706,9 @@ function renderLesson() {
     const praise = pick(['Super!', 'Richtig!', 'Klasse!', 'Stark!', 'Genau!', 'Volltreffer!']);
     const info = `<div class="fb-text small">#${p.id} · ${esc(p.de)} / ${esc(p.en)}</div>`;
     let html;
-    if (ok && r.typo) html = `<div class="fb-title">✔ Fast perfekt!</div><div class="fb-text">Achte auf die Schreibweise: <b>${esc(correctAnswer)}</b></div>`;
-    else if (ok) html = `<div class="fb-title">✔ ${praise}</div>${info}`;
+    if (ok && r.alt) html = `<div class="fb-title">✔ Richtig – auf ${other === 'de' ? 'Deutsch' : 'Englisch'}!</div><div class="fb-text">${lang === 'de' ? 'Deutsch' : 'Englisch'} heißt es: <b>${esc(correctAnswer)}</b></div>`;
+    else if (ok && r.typo) html = `<div class="fb-title">✔ Fast perfekt!</div><div class="fb-text">Achte auf die Schreibweise: <b>${esc(correctAnswer)}</b></div>`;
+    else if (ok) html = `<div class="fb-title">✔ ${praise}${gained ? ` +${gained} Punkte` : ''}</div>${info}`;
     else html = `<div class="fb-title">✖ ${skipped ? 'Kein Problem' : 'Leider falsch'}</div><div class="fb-text">Richtig: <b>${esc(correctAnswer)}</b>${r.given ? ` <span class="small">(du: ${esc(r.given)})</span>` : ''}</div>${info}${S.notes[p.id] ? `<div class="fb-text small">💡 ${esc(S.notes[p.id])}</div>` : ''}`;
     $('#fb').innerHTML = html;
     $('.fb-row').innerHTML = `<button class="btn ${ok ? '' : 'red'}" id="cont">Weiter</button>`;
@@ -728,10 +777,12 @@ function finishSession() {
     }
     xp = passed ? 20 + s.correct : 5;
     s.passed = passed;
-  } else if (type === 'blitz') {
-    xp = s.correct * 2;
-    s.newBest = s.correct > (S.best.blitz || 0);
-    if (s.newBest) S.best.blitz = s.correct;
+  } else if (type === 'blitz' || type === 'survival' || type === 'blur') {
+    const score = type === 'blur' ? s.points : s.correct;
+    xp = type === 'blur' ? Math.round(s.points / 2) : s.correct * 2;
+    s.score = score;
+    s.newBest = score > (S.best[type] || 0);
+    if (s.newBest) S.best[type] = score;
   } else {
     xp = 5 + s.correct;
   }
@@ -752,6 +803,9 @@ function renderResult() {
   if (type === 'weak') title = 'Schwächen trainiert!';
   if (type === 'exam') { title = `Meisterprüfung: ${Math.round(acc * 100)} %`; emoji = acc >= .9 ? '🥇' : acc >= .7 ? '🥈' : '🥉'; }
   if (type === 'blitz') { title = s.newBest ? 'Neuer Rekord!' : 'Zeit ist um!'; emoji = '⚡'; }
+  if (type === 'survival') { title = s.newBest ? 'Neuer Rekord!' : 'Keine Leben mehr!'; emoji = '❤️'; }
+  if (type === 'blur') { title = s.newBest ? 'Neuer Rekord!' : 'Runde vorbei!'; emoji = '🔍'; }
+  const game = ['blitz', 'survival', 'blur'].includes(type);
   const mistakes = [...s.mistakes].map(id => BY_ID.get(id));
 
   app.innerHTML = `<div class="result">
@@ -759,8 +813,8 @@ function renderResult() {
     <h1>${title}</h1>
     <div class="boxes">
       <div class="box"><b>XP</b><span>⚡ ${xp}</span></div>
-      <div class="box g"><b>${type === 'blitz' ? 'Treffer' : 'Genauigkeit'}</b><span>${type === 'blitz' ? s.correct : Math.round(acc * 100) + ' %'}</span></div>
-      <div class="box b"><b>${type === 'blitz' ? 'Rekord' : 'Beste Serie'}</b><span>${type === 'blitz' ? S.best.blitz : '🔥 ' + s.maxCombo}</span></div>
+      <div class="box g"><b>${game ? (type === 'blur' ? 'Punkte' : 'Treffer') : 'Genauigkeit'}</b><span>${game ? s.score : Math.round(acc * 100) + ' %'}</span></div>
+      <div class="box b"><b>${game ? 'Rekord' : 'Beste Serie'}</b><span>${game ? S.best[type] : '🔥 ' + s.maxCombo}</span></div>
     </div>
     ${mistakes.length ? `<div class="mistakes"><div class="muted small" style="font-weight:800;margin-bottom:6px">NOCHMAL ANSCHAUEN</div>
       <div class="chips">${mistakes.map(p => `<span class="chip"><img src="${img(p.id)}" alt="">${esc(p.de)} · ${esc(p.en)}</span>`).join('')}</div></div>` : ''}
@@ -779,12 +833,23 @@ function renderResult() {
 // ---------------------------------------------------------------------------
 // Pokédex
 // ---------------------------------------------------------------------------
-let dexState = { q: '', gen: '0', show: 'all' };
+let dexState = { q: '', gen: '0', show: 'all', reveal: false };
+const knownName = id => S.cards[id] || S.seen[id] || dexState.reveal;
+function dexFiltered() {
+  const q = normalize(dexState.q);
+  let list = P;
+  if (dexState.gen !== '0') list = list.filter(p => p.gen == dexState.gen);
+  if (dexState.show === 'learned') list = list.filter(p => S.cards[p.id]);
+  if (dexState.show === 'due') list = list.filter(p => isDue(p.id));
+  if (dexState.show === 'hidden') list = list.filter(p => !S.cards[p.id] && !S.seen[p.id]);
+  if (q) list = list.filter(p => (knownName(p.id) && (normalize(p.de).includes(q) || normalize(p.en).includes(q))) || String(p.id) === q);
+  return list;
+}
 function renderDex() {
   app.innerHTML = `${topbar(false)}
   <main>
     <div class="dex-filters">
-      <input id="dq" type="search" placeholder="Suchen (DE/EN/Nr.)" value="${esc(dexState.q)}">
+      <input id="dq" type="search" placeholder="Suchen (Name/Nr.)" value="${esc(dexState.q)}">
       <select id="dg"><option value="0">Alle Gens</option>${GENS.map(g => `<option value="${g.n}" ${dexState.gen == g.n ? 'selected' : ''}>Gen ${g.n} · ${g.region}</option>`).join('')}</select>
       <select id="ds">
         <option value="all" ${dexState.show === 'all' ? 'selected' : ''}>Alle</option>
@@ -792,34 +857,271 @@ function renderDex() {
         <option value="due" ${dexState.show === 'due' ? 'selected' : ''}>Fällig</option>
         <option value="hidden" ${dexState.show === 'hidden' ? 'selected' : ''}>Unbekannt</option>
       </select>
+      <button class="btn ghost small" id="dr">${dexState.reveal ? '🙈 Namen verdecken' : '👁 Alle Namen zeigen'}</button>
     </div>
+    <p class="muted small" style="margin:0 0 10px">Tippe auf ein Pokémon, um es erst zu <b>raten</b> und dann aufzudecken.</p>
     <div class="dex-list" id="dl"></div>
   </main>${nav('dex')}`;
   const draw = () => {
-    const q = normalize(dexState.q);
-    let list = P;
-    if (dexState.gen !== '0') list = list.filter(p => p.gen == dexState.gen);
-    if (dexState.show === 'learned') list = list.filter(p => S.cards[p.id]);
-    if (dexState.show === 'due') list = list.filter(p => isDue(p.id));
-    if (dexState.show === 'hidden') list = list.filter(p => !S.cards[p.id]);
-    if (q) list = list.filter(p => normalize(p.de).includes(q) || normalize(p.en).includes(q) || String(p.id) === q);
-    $('#dl').innerHTML = list.slice(0, 400).map(p => {
-      const c = S.cards[p.id];
-      return `<div class="dex-item ${c ? '' : 'unknown'}" title="${esc(S.notes[p.id] || '')}">
+    const list = dexFiltered();
+    $('#dl').innerHTML = list.slice(0, 400).map((p, i) => {
+      const c = S.cards[p.id], k = knownName(p.id);
+      return `<button class="dex-item ${k ? '' : 'unknown'}" data-i="${i}">
         ${c ? `<span class="lvl l${c.box}">Lv ${c.box}</span>` : ''}
         <img src="${img(p.id)}" alt="" loading="lazy">
         <div class="n">#${String(p.id).padStart(4, '0')}</div>
-        <div class="de">${esc(p.de)}</div><div class="en">${esc(p.en)}</div>
-        ${typeBadges(p.types)}
-        ${S.notes[p.id] ? `<div class="small muted" style="margin-top:4px">💡 ${esc(S.notes[p.id])}</div>` : ''}
-      </div>`;
+        ${k ? `<div class="de">${esc(p.de)}</div><div class="en">${esc(p.en)}</div>${typeBadges(p.types)}` : `<div class="de">???</div><div class="en">&nbsp;</div>`}
+        ${k && S.notes[p.id] ? `<div class="small muted" style="margin-top:4px">💡 ${esc(S.notes[p.id])}</div>` : ''}
+      </button>`;
     }).join('') + (list.length > 400 ? `<div class="muted small">… ${list.length - 400} weitere, Filter nutzen</div>` : '') +
       (!list.length ? '<div class="muted">Nichts gefunden.</div>' : '');
+    app.querySelectorAll('.dex-item').forEach(b => b.onclick = () =>
+      go('guess', { ids: list.map(x => x.id), idx: +b.dataset.i, back: 'dex' }));
   };
   $('#dq').oninput = e => { dexState.q = e.target.value; draw(); };
   $('#dg').onchange = e => { dexState.gen = e.target.value; draw(); };
   $('#ds').onchange = e => { dexState.show = e.target.value; draw(); };
+  $('#dr').onclick = () => { dexState.reveal = !dexState.reveal; renderDex(); };
   draw();
+}
+
+// Namen akzeptieren je nach Spracheinstellung (bei "beide" zählt DE oder EN)
+// Freies Raten: Deutsch UND Englisch zählen immer – bevorzugte Sprache zuerst
+function acceptNames(p) {
+  const first = S.settings.lang === 'en' ? [p.en, p.de] : [p.de, p.en];
+  return first[0] === first[1] ? [first[0]] : first;
+}
+
+// ---------------------------------------------------------------------------
+// Pokédex-Raten: erst raten, dann aufdecken
+// ---------------------------------------------------------------------------
+function renderGuess() {
+  const { ids } = route;
+  const idx = route.idx;
+  const p = BY_ID.get(ids[idx]);
+  const st = route.st && route.st.id === p.id ? route.st : (route.st = { id: p.id, tries: 0, hints: 0, solved: false, revealed: false });
+  const open = st.solved || st.revealed;
+  const lang = S.settings.lang === 'en' ? 'en' : 'de';
+  app.innerHTML = `${topbar(true)}
+  <main class="guess">
+    <div class="guess-nav">
+      <button class="btn ghost small" id="gprev" ${idx ? '' : 'disabled'}>←</button>
+      <div class="muted" style="font-weight:800">#${String(p.id).padStart(4, '0')} · ${idx + 1}/${ids.length}</div>
+      <button class="btn ghost small" id="gnext" ${idx < ids.length - 1 ? '' : 'disabled'}>→</button>
+    </div>
+    <div class="intro-card" id="gcard">
+      <div class="poke-stage"><img id="poke-img" class="${open || st.hints ? '' : 'sil'}" src="${img(p.id)}" alt=""></div>
+      ${open ? `
+        <div class="big-name">${esc(p[lang])} <button class="speak" id="speak">🔊</button></div>
+        <div class="en"><span class="flag">${lang === 'de' ? 'EN' : 'DE'}</span>${esc(p[lang === 'de' ? 'en' : 'de'])}</div>
+        ${typeBadges(p.types)}
+        <div class="hint-box">${st.solved ? `✔ Erraten${st.tries ? ` nach ${st.tries + 1} Versuchen` : ' – auf Anhieb!'}` : '👀 Aufgedeckt – beim nächsten Mal klappt’s!'}
+          ${S.cards[p.id] ? ` · Lernstufe ${S.cards[p.id].box}` : ''}</div>
+        <div class="mnemo"><label for="note">💡 Deine Eselsbrücke</label>
+          <textarea id="note" rows="1" placeholder="Merksatz …">${esc(S.notes[p.id] || '')}</textarea></div>
+      ` : `
+        <div class="prompt" style="text-align:center">Wer ist das Pokémon?</div>
+        ${st.hints >= 1 ? typeBadges(p.types) : ''}
+        ${st.hints >= 2 ? `<div class="hint-box">${esc(p[lang].length)} Buchstaben, beginnt mit „${esc(p[lang].slice(0, 2))}“</div>` : ''}
+        <input class="answer-input" id="answer" autocomplete="off" autocapitalize="words" spellcheck="false" placeholder="Name auf Deutsch oder Englisch…">
+        <div id="gfb" class="small" style="min-height:20px;font-weight:800"></div>
+      `}
+    </div>
+  </main>
+  <div class="footer"><div class="footer-inner"><div class="fb-row">
+    ${open ? `<button class="btn" id="gcont">${idx < ids.length - 1 ? 'Nächstes Pokémon' : 'Fertig'}</button>` : `
+      <button class="btn ghost skip" id="ghint" ${st.hints >= 2 ? 'disabled' : ''}>💡 Tipp</button>
+      <button class="btn ghost skip" id="greveal">Aufdecken</button>
+      <button class="btn" id="gcheck">Raten</button>`}
+  </div></div></div>`;
+  const move = d => { saveNote(); route.idx = idx + d; route.st = null; render(); };
+  const saveNote = () => { const n = $('#note'); if (n) { const v = n.value.trim(); if (v) S.notes[p.id] = v; else delete S.notes[p.id]; save(); } };
+  $('#gprev').onclick = () => move(-1);
+  $('#gnext').onclick = () => move(1);
+  if (open) {
+    $('#speak').onclick = () => speak(p[lang], lang);
+    $('#gcont').onclick = () => idx < ids.length - 1 ? move(1) : (saveNote(), go('dex'));
+    keyHandler = e => {
+      if (document.activeElement?.id === 'note') return;
+      if (e.key === 'Enter' || e.key === 'ArrowRight') { e.preventDefault(); if (idx < ids.length - 1) move(1); }
+      if (e.key === 'ArrowLeft' && idx) move(-1);
+    };
+    return;
+  }
+  const inp = $('#answer');
+  setTimeout(() => inp.focus(), 50);
+  const guess = () => {
+    const v = inp.value;
+    if (!v.trim()) return;
+    const res = acceptNames(p).map(n => checkTyped(v, n));
+    if (res.some(r => r !== 'wrong')) {
+      st.solved = true; S.seen[p.id] = 1;
+      addXp(st.hints || st.tries ? 1 : 3);
+      beep(true); speak(p[lang], lang);
+      render();
+    } else {
+      st.tries++; beep(false);
+      $('#gcard').classList.remove('shake'); void $('#gcard').offsetWidth; $('#gcard').classList.add('shake');
+      $('#gfb').innerHTML = `<span style="color:var(--red)">✖ Nicht ganz${st.tries >= 3 ? ' – nimm einen Tipp oder deck auf' : ''} (${st.tries})</span>`;
+      inp.select();
+    }
+  };
+  $('#gcheck').onclick = guess;
+  $('#ghint').onclick = () => { st.hints++; render(); };
+  $('#greveal').onclick = () => { st.revealed = true; S.seen[p.id] = 1; save(); beep(false); render(); };
+  keyHandler = e => {
+    if (e.key === 'Enter') { e.preventDefault(); guess(); }
+    if (e.key === 'ArrowRight' && !inp.value) move(1);
+    if (e.key === 'ArrowLeft' && !inp.value && idx) move(-1);
+  };
+}
+
+// ---------------------------------------------------------------------------
+// "Alle nennen" – so viele Namen wie möglich frei eintippen (wie pkmnquiz)
+// ---------------------------------------------------------------------------
+let marathonTimer = null;
+const fmtTime = ms => { const t = Math.floor(ms / 1000), h = t / 3600 | 0, m = (t / 60 | 0) % 60, sec = t % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sec).padStart(2, '0'); };
+function marathonPool(key) { return key === 'all' ? P : GENS[+key.slice(1) - 1].mons; }
+function marathonState(key) {
+  return S.marathon[key] || (S.marathon[key] = { found: [], elapsed: 0, gaveUp: false, done: false });
+}
+function marathonLabel(key, total) {
+  const m = S.marathon[key];
+  const best = S.best['m-' + key];
+  if (!m || !m.found.length) return best ? `Bestzeit ${fmtTime(best)}` : 'Namen frei eintippen';
+  return `${m.found.length}/${total} gefunden${best ? ` · Bestzeit ${fmtTime(best)}` : ''}`;
+}
+let mUi = { type: null, sil: false };
+function renderMarathon() {
+  clearInterval(marathonTimer);
+  const key = route.key;
+  const pool = marathonPool(key);
+  const st = marathonState(key);
+  const found = new Set(st.found);
+  const finished = st.done || st.gaveUp;
+  const title = key === 'all' ? `Alle ${P.length} Pokémon` : `Gen ${key.slice(1)} · ${GENS[+key.slice(1) - 1].region}`;
+  let runStart = Date.now();
+  const elapsed = () => st.elapsed + (finished ? 0 : Date.now() - runStart);
+
+  const missingTypes = () => {
+    const counts = {};
+    pool.forEach(p => { if (!found.has(p.id)) p.types.forEach(t => counts[t] = (counts[t] || 0) + 1); });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  };
+  const typeChips = () => {
+    const mt = missingTypes();
+    if (!mt.length) return '<span style="color:var(--green);font-weight:800">Alle gefunden! 🎉</span>';
+    return `<button class="tchip ${mUi.type ? '' : 'on'}" data-type="">Alle</button>` + mt.map(([t, c]) =>
+      `<button class="tchip ${mUi.type === t ? 'on' : ''}" data-type="${esc(t)}" style="--tc:${TYPE_COLORS[t]}">${esc(t)} <b>${c}</b></button>`).join('');
+  };
+  const slot = p => {
+    const f = found.has(p.id), miss = finished && !f;
+    const showImg = f || miss || mUi.sil;
+    const hide = mUi.type && !p.types.includes(mUi.type);
+    return `<div class="mslot ${f ? 'found' : ''} ${miss ? 'miss' : ''}" id="ms${p.id}" ${hide ? 'hidden' : ''}>
+      ${showImg ? `<img src="${img(p.id)}" alt="" loading="lazy" class="${f || miss ? '' : 'sil'}">` : '<div class="mimg"></div>'}
+      <div><div class="n">#${p.id}</div><div class="nm">${f || miss ? esc(acceptNames(p)[0]) : '???'}</div>${(f || miss) && p.de !== p.en ? `<div class="n">${esc(acceptNames(p)[1])}</div>` : ''}</div>
+    </div>`;
+  };
+
+  app.innerHTML = `${topbar(true)}
+  <main class="marathon">
+    <div class="mhead">
+      <div class="mtop">
+        <div><div class="muted small" style="font-weight:800;text-transform:uppercase">${title}</div>
+          <div class="mcount"><span id="mcount">${found.size}</span> / ${pool.length}</div></div>
+        <div class="timer" id="mtime">${fmtTime(elapsed())}</div>
+      </div>
+      <div class="progress"><i id="mbar" style="width:${found.size / pool.length * 100}%"></i></div>
+      ${finished ? `<div class="hint-box" style="margin-top:10px">${st.done ? `🏆 Geschafft in ${fmtTime(st.elapsed)}!` : `🏳 Aufgegeben bei ${found.size}/${pool.length}. Rot = noch nicht gewusst.`}</div>`
+        : `<input class="answer-input" id="minput" autocomplete="off" autocapitalize="words" spellcheck="false" placeholder="Name eingeben (DE oder EN)…" style="margin-top:10px">`}
+      <div id="mfb" class="small" style="min-height:20px;font-weight:800;margin-top:4px"></div>
+    </div>
+    <div class="mextra">
+      <div class="muted small" style="font-weight:800;margin-bottom:4px">Fehlende Typen (antippen zum Filtern):</div>
+      <div class="tchips" id="mtypes">${typeChips()}</div>
+      <div class="mctl">
+        <button class="btn ghost small" id="msil">${mUi.sil ? '🙈 Silhouetten aus' : '👤 Silhouetten an'}</button>
+        ${finished ? '' : '<button class="btn ghost small" id="mgive">🏳 Aufgeben</button>'}
+        <button class="btn ghost small" id="mreset">↺ Neu</button>
+      </div>
+    </div>
+    <div class="mgrid" id="mgrid">${pool.map(slot).join('')}</div>
+  </main>`;
+
+  const persist = () => { st.elapsed = elapsed(); runStart = Date.now(); save(); };
+  const fb = (html, color) => { $('#mfb').innerHTML = `<span style="color:${color}">${html}</span>`; };
+  const updateHead = () => {
+    $('#mcount').textContent = found.size;
+    $('#mbar').style.width = (found.size / pool.length * 100) + '%';
+    $('#mtypes').innerHTML = typeChips(); bindChips();
+  };
+  const bindChips = () => app.querySelectorAll('.tchip').forEach(c => c.onclick = () => {
+    mUi.type = c.dataset.type || null;
+    app.querySelectorAll('.tchip').forEach(x => x.classList.toggle('on', (x.dataset.type || null) === mUi.type));
+    pool.forEach(p => { $('#ms' + p.id).hidden = !!mUi.type && !p.types.includes(mUi.type); });
+  });
+  bindChips();
+
+  const accept = p => {
+    found.add(p.id); st.found.push(p.id);
+    const el = $('#ms' + p.id);
+    el.outerHTML = slot(p);
+    const nel = $('#ms' + p.id); nel.classList.add('pop');
+    $('#minput').value = '';
+    fb(`✔ ${esc(acceptNames(p).join(' / '))} (#${p.id})`, 'var(--green-d)');
+    beep(true);
+    addXp(1);
+    if (found.size === pool.length) {
+      st.done = true; persist();
+      const bk = 'm-' + key;
+      if (!S.best[bk] || st.elapsed < S.best[bk]) S.best[bk] = st.elapsed;
+      save(); render();
+      return;
+    }
+    persist(); updateHead();
+  };
+  const tryMatch = (v, strict) => {
+    const n = normalize(v); if (!n) return false;
+    const hit = pool.find(p => !found.has(p.id) && acceptNames(p).some(x => normalize(x) === n));
+    if (hit) { accept(hit); return true; }
+    if (strict) return false;
+    // Enter: genauer prüfen
+    const dup = pool.find(p => found.has(p.id) && acceptNames(p).some(x => normalize(x) === n));
+    if (dup) { fb(`Schon gefunden: ${esc(acceptNames(dup)[0])}`, 'var(--orange)'); return false; }
+    const other = P.find(p => acceptNames(p).some(x => normalize(x) === n));
+    if (other) { fb(`${esc(acceptNames(other)[0])} ist aus Gen ${other.gen} – nicht gesucht.`, 'var(--orange)'); return false; }
+    const near = pool.filter(p => !found.has(p.id) && acceptNames(p).some(x => checkTyped(v, x) === 'typo'));
+    if (near.length === 1) { accept(near[0]); fb(`✔ Fast – richtig geschrieben: <b>${esc(acceptNames(near[0])[0])}</b>`, 'var(--green-d)'); return true; }
+    fb('✖ Kenne ich nicht', 'var(--red)'); beep(false);
+    $('#minput').classList.remove('shake'); void $('#minput').offsetWidth; $('#minput').classList.add('shake');
+    return false;
+  };
+
+  if (!finished) {
+    const inp = $('#minput');
+    setTimeout(() => inp.focus(), 50);
+    inp.oninput = () => tryMatch(inp.value, true);
+    keyHandler = e => { if (e.key === 'Enter' && document.activeElement === inp) { e.preventDefault(); tryMatch(inp.value, false); } };
+    marathonTimer = setInterval(() => {
+      const t = $('#mtime'); if (!t) return clearInterval(marathonTimer);
+      t.textContent = fmtTime(elapsed());
+      if (Date.now() - runStart > 10000) persist();
+    }, 1000);
+    $('#mgive').onclick = () => {
+      if (!confirm('Aufgeben und alle fehlenden Pokémon anzeigen?')) return;
+      persist(); st.gaveUp = true; save(); render();
+    };
+    // beim Verlassen Zeit sichern
+    const leave = () => { if ($('#mtime')) persist(); };
+    window.addEventListener('pagehide', leave, { once: true });
+    app.querySelector('[data-act="back"]').addEventListener('click', leave, { capture: true, once: true });
+  }
+  $('#msil').onclick = () => { if (!finished) persist(); mUi.sil = !mUi.sil; render(); };
+  $('#mreset').onclick = () => {
+    if (found.size && !confirm('Fortschritt in diesem Quiz zurücksetzen und neu starten?')) return;
+    S.marathon[key] = { found: [], elapsed: 0, gaveUp: false, done: false }; save(); render();
+  };
 }
 
 // ---------------------------------------------------------------------------

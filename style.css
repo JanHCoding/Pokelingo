@@ -296,3 +296,43 @@ main { flex: 1; padding: 16px; padding-bottom: 96px; }
   .opt img { width: 76px; height: 76px; }
   .big-name { font-size: 26px; }
 }
+
+/* ---------- Neue Modi ---------- */
+.mode.wide { width: 100%; margin-bottom: 10px; border-color: var(--blue); box-shadow: 0 4px 0 var(--blue-d); }
+.dex-item { font: inherit; color: inherit; cursor: pointer; }
+.dex-item:hover { border-color: var(--blue); }
+.dex-filters .btn.small { flex: 0 0 auto; }
+
+.poke-stage img.blur { filter: blur(26px) saturate(.6); }
+.poke-stage img.blur.clearing { transition: filter 10s linear; filter: blur(0) saturate(1); }
+
+.guess { display: flex; flex-direction: column; gap: 12px; padding-bottom: 140px; }
+.guess-nav { display: flex; align-items: center; justify-content: space-between; }
+.guess .answer-input { text-align: center; }
+
+.marathon { padding-top: 0; }
+.mhead { position: sticky; top: 58px; z-index: 4; background: var(--bg); padding: 12px 0 4px; }
+.mextra { padding-bottom: 12px; border-bottom: 2px solid var(--line); margin-bottom: 12px; }
+.mtop { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 8px; }
+.mcount { font-size: 28px; font-weight: 900; }
+.tchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tchip {
+  border: 2px solid var(--tc, var(--line)); background: var(--card); color: var(--text); border-radius: 999px;
+  padding: 2px 10px; font-size: 13px; font-weight: 800;
+}
+.tchip b { color: var(--tc, var(--text)); }
+.tchip.on { background: var(--tc, var(--blue)); color: #fff; }
+.tchip.on b { color: #fff; }
+.mctl { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; padding-bottom: 40px; }
+.mslot { display: flex; align-items: center; gap: 6px; border: 2px solid var(--line); border-radius: 12px; padding: 4px 8px 4px 4px; min-height: 48px; color: var(--muted); }
+.mslot img, .mslot .mimg { width: 38px; height: 38px; object-fit: contain; flex: 0 0 auto; }
+.mslot img.sil { filter: brightness(0) opacity(.35); }
+.mslot .n { font-size: 11px; font-weight: 800; }
+.mslot .nm { font-weight: 800; font-size: 14px; line-height: 1.15; word-break: break-word; }
+.mslot.found { border-color: var(--green); background: var(--green-bg); color: var(--green-d); }
+.mslot.miss { border-color: var(--red); background: var(--red-bg); color: var(--red-d); }
+.mslot.pop { animation: pop .4s ease-out; }
+.langpill { border: 2px solid var(--line); background: var(--card); border-radius: 999px; padding: 4px 10px; font-weight: 800; font-size: 13px; white-space: nowrap; }
+.langpill:active { transform: translateY(1px); }
+@media (max-width: 380px) { .topbar .title { font-size: 18px; } .topbar { gap: 8px; } }
